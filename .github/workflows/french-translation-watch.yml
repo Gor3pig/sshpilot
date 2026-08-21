@@ -29,7 +29,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             blueprint-compiler \
+            desktop-file-utils \
             gettext \
+            gtk-update-icon-cache \
             libglib2.0-dev \
             meson \
             ninja-build
