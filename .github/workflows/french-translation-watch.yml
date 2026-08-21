@@ -1,0 +1,159 @@
+name: French translation watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"
+      timezone: "Europe/Paris"
+
+permissions:
+  contents: read
+
+jobs:
+  check-french:
+    if: github.repository == 'Gor3pig/sshpilot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout upstream main
+        uses: actions/checkout@v7
+        with:
+          repository: mfat/sshpilot
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install gettext build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            blueprint-compiler \
+            gettext \
+            libglib2.0-dev \
+            meson \
+            ninja-build
+
+      - name: Generate current gettext template
+        run: |
+          meson setup builddir
+          meson compile -C builddir sshpilot-pot
+          test -s po/sshpilot.pot
+
+      - name: Check French translation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pot=po/sshpilot.pot
+          po=po/fr.po
+
+          count_active_file() {
+            awk '
+              /^msgid / { count++ }
+              END { print (count > 0 ? count - 1 : 0) }
+            ' "$1"
+          }
+
+          count_filter() {
+            msgattrib "$@" |
+              awk '
+                /^msgid / { count++ }
+                END { print (count > 0 ? count - 1 : 0) }
+              '
+          }
+
+          format_status=0
+          comparison_status=0
+
+          msgfmt \
+            --check \
+            --check-format \
+            --check-accelerators=_ \
+            --statistics \
+            -o /dev/null \
+            "$po" || format_status=$?
+
+          msgcmp --no-fuzzy-matching "$po" "$pot" ||
+            comparison_status=$?
+
+          pot_total=$(count_active_file "$pot")
+          po_total=$(count_filter --no-obsolete "$po")
+          translated=$(count_filter \
+            --translated --no-fuzzy --no-obsolete "$po")
+          untranslated=$(count_filter \
+            --untranslated --no-obsolete "$po")
+          fuzzy=$(count_filter \
+            --only-fuzzy --no-obsolete "$po")
+
+          marked_obsolete=$(
+            msgattrib --only-obsolete "$po" |
+              awk '/^#~ msgid / { count++ }
+                   END { print (count + 0) }'
+          )
+
+          missing=$(
+            msgcomm --less-than=2 --omit-header \
+              "$pot" "$po" <(cat "$po") |
+              awk '/^msgid / { count++ }
+                   END { print (count + 0) }'
+          )
+
+          stale=$(
+            msgcomm --less-than=2 --omit-header \
+              "$po" "$pot" <(cat "$pot") |
+              awk '/^msgid / { count++ }
+                   END { print (count + 0) }'
+          )
+
+          obsolete=$((marked_obsolete + stale))
+
+          if (( format_status != 0 ||
+                comparison_status != 0 ||
+                missing != 0 ||
+                fuzzy != 0 ||
+                untranslated != 0 ||
+                obsolete != 0 ||
+                po_total != pot_total ||
+                translated != pot_total )); then
+
+            echo "::error::French translation needs updating."
+            echo "POT messages: $pot_total"
+            echo "French active messages: $po_total"
+            echo "Translated: $translated"
+            echo "New msgid: $missing"
+            echo "Fuzzy: $fuzzy"
+            echo "Untranslated: $untranslated"
+            echo "Obsolete: $obsolete"
+            echo "  Marked #~: $marked_obsolete"
+            echo "  Active but absent from POT: $stale"
+
+            if (( missing > 0 )); then
+              echo
+              echo "New untranslated strings:"
+
+              msgcomm --less-than=2 "$pot" "$po" <(cat "$po") |
+                msgen - |
+                msgexec 0 |
+                {
+                  first=1
+                  while IFS= read -r -d '' msgid; do
+                    if (( first )); then
+                      first=0
+                      continue
+                    fi
+                    printf '%s\n' "$msgid" |
+                      sed '1s/^/- /; 2,$s/^/  /'
+                  done
+                }
+            fi
+
+            exit 1
+          fi
+
+          echo "French translation is up to date."
+          echo "$translated/$pot_total messages translated."
+          echo "$fuzzy fuzzy."
+          echo "$untranslated untranslated."
+          echo "$obsolete obsolete."
+          exit 0
