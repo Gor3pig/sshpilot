@@ -95,17 +95,17 @@ jobs:
           )
 
           missing=$(
-            msgcomm --less-than=2 --omit-header \
+            msgcomm --less-than=2 \
               "$pot" "$po" <(cat "$po") |
               awk '/^msgid / { count++ }
-                   END { print (count + 0) }'
+                   END { print (count > 0 ? count - 1 : 0) }'
           )
 
           stale=$(
-            msgcomm --less-than=2 --omit-header \
+            msgcomm --less-than=2 \
               "$po" "$pot" <(cat "$pot") |
               awk '/^msgid / { count++ }
-                   END { print (count + 0) }'
+                   END { print (count > 0 ? count - 1 : 0) }'
           )
 
           obsolete=$((marked_obsolete + stale))
